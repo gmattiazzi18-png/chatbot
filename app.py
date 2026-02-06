@@ -16,14 +16,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. MOTORE DI CONNESSIONE
+# Sostituisci la sezione 2 del codice precedente con questa:
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df_utenti = conn.read(worksheet="utenti")
-except:
-    st.error("Connessione al database non riuscita. Controlla i Secrets.")
-
-client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    if "connections.gsheets" in st.secrets:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df_utenti = conn.read(worksheet="utenti")
+    else:
+        st.error("Configurazione Secrets mancante: controlla il blocco [connections.gsheets]")
+        df_utenti = pd.DataFrame(columns=['Email', 'CodiceID', 'Status']) # Crea un foglio vuoto per non crashare
+except Exception as e:
+    st.error(f"Errore di connessione: {e}")
+    df_utenti = pd.DataFrame(columns=['Email', 'CodiceID', 'Status'])
 
 # 3. LOGICA MULTILINGUA (Storytelling & Termini)
 TEXTS = {
