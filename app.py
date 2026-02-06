@@ -1,107 +1,193 @@
 import streamlit as st
-import pandas as pd
-import hashlib
-from streamlit_gsheets import GSheetsConnection
+import folium
+from streamlit_folium import st_folium
+import swisseph as swe
+from datetime import datetime
+from geopy.geocoders import Nominatim
+import urllib.parse
+import random
 import openai
 
-# 1. CONFIGURAZIONE E STILE "DEEP SPACE"
-st.set_page_config(page_title="ASTROPATH - Oracle", layout="wide", page_icon="🏹")
+# --- 1. CONFIGURAZIONE & BLINDATURA LEGALE ---
+st.set_page_config(page_title="AstroCarto Pro", layout="wide", page_icon="🌍")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #05070a; color: #e0e0e0; }
-    .main-card { background: linear-gradient(145deg, #1e2024, #111214); padding: 25px; border-radius: 15px; border: 1px solid #333; }
-    .nasa-box { border-left: 3px solid #00529b; background: #1a1c23; padding: 15px; font-family: monospace; font-size: 0.85rem; }
-    #MainMenu, footer, header {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
+# Footer Legale e ToS (Blindatura contro il furto d'idea)
+legal_footer = """
+<style>
+.footer { position: fixed; bottom: 0; width: 100%; text-align: center; font-size: 10px; color: gray; background: rgba(255,255,255,0.1); }
+</style>
+<div class="footer">
+© 2026 AstroCarto Pro. Proprietà Intellettuale Riservata. È vietata la riproduzione del codice, dello storytelling e l'uso commerciale non autorizzato.
+Reverse engineering e scraping sono monitorati e perseguiti legalmente.
+</div>
+"""
 
-# Sostituisci la sezione 2 del codice precedente con questa:
-try:
-    if "connections.gsheets" in st.secrets:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df_utenti = conn.read(worksheet="utenti")
-    else:
-        st.error("Configurazione Secrets mancante: controlla il blocco [connections.gsheets]")
-        df_utenti = pd.DataFrame(columns=['Email', 'CodiceID', 'Status']) # Crea un foglio vuoto per non crashare
-except Exception as e:
-    st.error(f"Errore di connessione: {e}")
-    df_utenti = pd.DataFrame(columns=['Email', 'CodiceID', 'Status'])
-
-# 3. LOGICA MULTILINGUA (Storytelling & Termini)
-TEXTS = {
-    "IT": {
-        "welcome": "Benvenuto nell'Astropath",
-        "cta_free": "Analisi Base Disponibile",
-        "cta_pro": "Sblocca la tua Linea di Potere",
-        "terms": "L'uso di questo software implica l'accettazione dei dati orbitali NASA JPL.",
-        "oracle_prompt": "Agisci come l'Oracolo di Atene. Analizza la posizione di {p} a {lat}/{lon}. Sii criptico ma autorevole."
-    },
+# --- 2. DIZIONARI TRADUZIONI E STORYTELLING ---
+TRAD = {
     "EN": {
-        "welcome": "Welcome to Astropath",
-        "cta_free": "Basic Analysis Available",
-        "cta_pro": "Unlock your Power Line",
-        "terms": "Use of this software implies acceptance of NASA JPL orbital data.",
-        "oracle_prompt": "Act as the Oracle of Athens. Analyze {p} position at {lat}/{lon}. Be cryptic yet authoritative."
+        "hero_title": "🌍 AstroCarto Pro",
+        "hero_subtitle": "Your global destiny, calculated by the stars.",
+        "install_text": "📲 Add to Home Screen for daily luck tracking.",
+        "share_msg": "Check out where your stars shine! 🌍✨ ",
+        "disclaimer": "FOR ENTERTAINMENT ONLY. No refunds for instant digital content. Data: NASA JPL.",
+        "name_label": "Full Name",
+        "mail_label": "Your Email",
+        "btn_free": "Start Your Journey",
+        "city_label": "Birth City",
+        "date_label": "Birth Date",
+        "pro_label": "Unlock PRO Transits",
+        "buy_btn": "Get PRO Access - $9.99/mo",
+        "oracle_btn": "Generate Premium AI Report ($49)",
+        "oracle_title": "🔮 Ask the Oracle",
+        "success_pro": "✅ PRO Mode Active.",
+        "story_title": "✨ History is written in the stars"
+    },
+    "IT": {
+        "hero_title": "🌍 AstroCarto Pro",
+        "hero_subtitle": "Il tuo destino globale, calcolato dalle stelle.",
+        "install_text": "📲 Installa sulla Home per monitorare la tua fortuna.",
+        "share_msg": "Scopri dove brillano le tue stelle! 🌍✨ ",
+        "disclaimer": "SOLO PER INTRATTENIMENTO. Rinuncia al recesso per contenuti digitali istantanei. Dati: NASA JPL.",
+        "name_label": "Nome Completo",
+        "mail_label": "La tua Email",
+        "btn_free": "Inizia il Viaggio",
+        "city_label": "Città di Nascita",
+        "date_label": "Data di Nascita",
+        "pro_label": "Sblocca Transiti PRO",
+        "buy_btn": "Attiva PRO - 9.99€/mese",
+        "oracle_btn": "Genera Report AI Premium (49€)",
+        "oracle_title": "🔮 Chiedi all'Oracolo",
+        "success_pro": "✅ Modalità PRO Attiva.",
+        "story_title": "✨ La storia è scritta nelle stelle"
+    },
+    "ES": {
+        "hero_title": "🌍 AstroCarto Pro",
+        "hero_subtitle": "Tu destino global, calculado por las estrellas.",
+        "install_text": "📲 Añadir a inicio para seguir tu suerte.",
+        "share_msg": "¡Mira dónde brillan tus estrellas! 🌍✨ ",
+        "disclaimer": "SOLO ENTRETENIMIENTO. Sin devoluciones en contenido digital. Datos: NASA JPL.",
+        "name_label": "Nombre Completo",
+        "mail_label": "Tu Email",
+        "btn_free": "Empezar",
+        "city_label": "Ciudad de Nacimiento",
+        "date_label": "Fecha de Nacimiento",
+        "pro_label": "Tránsitos PRO",
+        "buy_btn": "Activar PRO - $9.99/mes",
+        "oracle_btn": "Generar Informe AI Premium ($49)",
+        "oracle_title": "🔮 Consulta al Oráculo",
+        "success_pro": "✅ Modo PRO Activo.",
+        "story_title": "✨ La historia está escrita en las estrellas"
     }
 }
-lang = st.sidebar.selectbox("Language / Lingua", ["IT", "EN"])
-T = TEXTS[lang]
 
-# 4. FUNZIONE GRAFICO / MAPPA (L'esca visiva)
-def mostra_anteprima_mappa():
-    st.markdown("<div class='main-card'>", unsafe_allow_html=True)
-    st.subheader("📍 Le tue linee di potere correnti")
-    # Qui simuliamo il grafico che "invoglia"
-    df_map = pd.DataFrame({'lat': [37.98], 'lon': [23.72]}) # Esempio Atene
-    st.map(df_map, zoom=2)
-    st.info("⚠️ Le linee di Giove e Plutone sono bloccate. Passa a PRO per visualizzarle.")
-    st.markdown("</div>", unsafe_allow_html=True)
+STORIES_DATA = {
+    "IT": [
+        {"name": "Principessa Diana", "hook": "Il Monito di Parigi", "story": "Parigi sedeva sull'incrocio Marte-Urano: zona di massimo rischio fisico.", "source": "Dati: 1 Luglio 1961, Astro-Databank (AA).", "icon": "⚠️"},
+        {"name": "Steve Jobs", "hook": "Visione in India", "story": "Il suo viaggio in India lo pose sulla linea Sole-MC, accendendo la leadership di Apple.", "source": "Dati: 24 Febbraio 1955, Astro-Databank (AA).", "icon": "🚀"},
+        {"name": "J.K. Rowling", "hook": "Dalle Stalle alle Stelle", "story": "Si trasferì a Londra sulla linea Giove-AS poco prima di scrivere Harry Potter.", "source": "Dati: 31 Luglio 1965, Astro-Databank (A).", "icon": "💰"}
+    ]
+}
 
-# 5. LOGICA DI ACCESSO
-st.sidebar.title("🏹 Login")
-u_email = st.sidebar.text_input("Email")
-u_code = st.sidebar.text_input("Stripe ID / Access Code", type="password")
-is_pro = False
+# --- 3. LOGICA DI CALCOLO E AI ---
+geolocator = Nominatim(user_agent="astro_final_app")
 
-if u_email and u_code:
-    # Verifica nel database (Google Sheets)
-    user_row = df_utenti[(df_utenti['Email'] == u_email) & (df_utenti['CodiceID'] == u_code)]
-    if not user_row.empty and user_row.iloc[0]['Status'] == 'PRO':
-        is_pro = True
-        st.sidebar.success("Status: PRO UNLOCKED")
-    else:
-        st.sidebar.warning("Codice errato o accesso FREE.")
+def get_live_stats():
+    base = 1420
+    diff = (datetime.now() - datetime(2025, 1, 1)).total_seconds() // 60
+    return int(base + (diff * 0.12)), random.randint(12, 48)
 
-# 6. INTERFACCIA DINAMICA (Storytelling e Contenuti)
-if not is_pro:
-    st.title(T["welcome"])
-    mostra_anteprima_mappa()
-    st.markdown(f"### {T['cta_free']}")
-    st.write("Il tuo tema natale indica una forte risonanza con le coordinate del Mediterraneo.")
-    if st.button("Acquista Report Oracle (49€)"):
-        st.link_button("Vai al Pagamento Stripe", "https://buy.stripe.com/tuo_link")
+def get_planet_lon(p_id, jd):
+    res, _ = swe.calc_ut(jd, p_id)
+    gst = swe.sidtime(jd) * 15
+    lon = (res[0] - gst) % 360
+    return lon if lon <= 180 else lon - 360
+
+def chiedi_all_oracolo(nome, dati, domanda):
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
+    prompt = f"Utente: {nome}. Dati Astro: {dati}. Domanda: {domanda}. Fornisci un report professionale."
+    response = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "system", "content": "Sei l'Oracolo AstroCartografico."}, {"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+# --- 4. INTERFACCIA UTENTE ---
+if 'status' not in st.session_state: st.session_state.status = 'ANONIMO'
+
+lang = st.sidebar.selectbox("🌐 Lingua/Language/Idioma", ["IT", "EN", "ES"])
+t = TRAD[lang]
+
+if st.session_state.status == 'ANONIMO':
+    st.title(t["hero_title"])
+    st.subheader(t["hero_subtitle"])
+    
+    m_total, u_online = get_live_stats()
+    c1, c2 = st.columns(2); c1.metric("Maps Generated", f"{m_total:,}"); c2.metric("Users Online", u_online)
+    
+    st.divider()
+    st.subheader(t["story_title"])
+    # Mostriamo lo storytelling (default IT per brevità nel template, ma dinamico)
+    for item in STORIES_DATA["IT"]:
+        with st.expander(f"{item['icon']} {item['name']} - {item['hook']}"):
+            st.write(item['story'])
+            st.caption(item['source'])
+    
+    st.divider()
+    with st.form("lead"):
+        nome = st.text_input(t["name_label"])
+        email = st.text_input(t["mail_label"])
+        if st.form_submit_button(t["btn_free"]):
+            if email and nome:
+                st.session_state.status, st.session_state.nome = 'FREE', nome
+                st.rerun()
+
 else:
-    # CONTENUTO PRO
-    st.title("🔮 L'Oracolo è Attivo")
-    query = st.text_input("Fai la tua domanda sulla tua destinazione:")
-    if query:
-        with st.spinner("Consultando le effemeridi..."):
-            # Chiamata reale all'AI
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "system", "content": T["oracle_prompt"].format(p="Jupiter", lat="37.9", lon="23.7")},
-                          {"role": "user", "content": query}]
-            )
-            st.write(response.choices[0].message.content)
-            
-            # BOX METADATI NASA (Accreditamento)
-            st.markdown(f"""
-                <div class="nasa-box">
-                    <b>NASA JPL DATA VALIDATION</b><br>
-                    Epoch: J2000.0 | Object: JUPITER | Precision: 0.00001s<br>
-                    Status: Validated for {u_email}
-                </div>
-            """, unsafe_allow_html=True)
+    # APP CORE
+    with st.sidebar:
+        st.header(f"Ciao, {st.session_state.nome}!")
+        citta = st.text_input(t["city_label"], "Rome")
+        data = st.date_input(t["date_label"], datetime(1990, 1, 1))
+        
+        st.divider()
+        is_pro = st.toggle(t["pro_label"], value=(st.session_state.status == 'PRO'))
+        st.session_state.status = 'PRO' if is_pro else 'FREE'
+        
+        if st.session_state.status == 'FREE':
+            st.link_button(t["buy_btn"], "https://buy.stripe.com/tuo_link_sub")
 
-st.sidebar.markdown(f"--- \n<small>{T['terms']}</small>", unsafe_allow_html=True)
+    # MAPPA
+    try:
+        loc = geolocator.geocode(citta)
+        if loc:
+            m = folium.Map(location=[loc.latitude, loc.longitude], zoom_start=2, tiles="CartoDB dark_matter")
+            jd_n = swe.julday(data.year, data.month, data.day, 12)
+            planets = {"Sun": 0, "Venus": 3, "Jupiter": 5, "Mars": 4}
+            colors = {"Sun": "gold", "Venus": "#FF69B4", "Jupiter": "#4169E1", "Mars": "red"}
+            
+            dati_per_ai = ""
+            for p, p_id in planets.items():
+                ln = get_planet_lon(p_id, jd_n)
+                folium.PolyLine([[-90, ln], [90, ln]], color=colors[p], weight=2, tooltip=p).add_to(m)
+                dati_per_ai += f"{p} natal lon: {ln}; "
+                if st.session_state.status == 'PRO':
+                    lt = get_planet_lon(p_id, swe.julday(datetime.now().year, datetime.now().month, datetime.now().day, 12))
+                    folium.PolyLine([[-90, lt], [90, lt]], color=colors[p], weight=2, dash_array='5,5').add_to(m)
+            
+            st_folium(m, width="100%", height=500)
+            
+            # SEZIONE ORACOLO AI (Upsell 50€)
+            if st.session_state.status == 'PRO':
+                st.divider()
+                st.subheader(t["oracle_title"])
+                domanda = st.text_area("Cosa vuoi sapere su questa posizione?")
+                if st.button(t["oracle_btn"]):
+                    # Qui idealmente verifichi il pagamento dell'acquisto singolo
+                    st.link_button("Acquista Report Premium (49€)", "https://buy.stripe.com/tuo_link_49euro")
+                    # Logica AI:
+                    # responso = chiedi_all_oracolo(st.session_state.nome, dati_per_ai, domanda)
+                    # st.markdown(responso)
+    except Exception as e:
+        st.error("Errore nel caricamento.")
+
+st.markdown(legal_footer, unsafe_allow_html=True)
+st.caption(t["disclaimer"])
